@@ -1,0 +1,238 @@
+<html>
+<head>
+  <title>OTR Implementation based on Signal Protocol</title>
+  <style>
+  @font-face {
+    font-family: gotham;
+    src: url("./fonts/gotham.ttf");
+  }
+  @font-face {
+    font-family: consolas;
+    src: url("./fonts/gotham.ttf");
+  }
+  #A_box {
+    width: 20%;
+    position: fixed;
+    left: 10px;
+    top: 10px;
+    padding: 20px;
+    border: 2px solid black;
+    border-radius: 5px;
+
+  }
+  #B_box {
+    width: 20%;
+    position: fixed;
+    right: 10px;
+    top: 10px;
+    padding: 20px;
+    border: 2px solid black;
+    border-radius: 5px;
+
+  }
+  #output_message_A, #output_message_B {
+    background-color: #3F51B5;
+    color: white;
+    border-radius: 5px;
+    padding: 10px;
+    font-size: 0.8em;
+    margin-bottom: 50px;
+    box-shadow: inset 0 0 5px black;
+  }
+  input {
+    padding: 10px;
+    display: block;
+    font-family: gotham;
+    outline-width: 0px;
+    margin-bottom: 5px;
+    width: 100%;
+    border: 1px solid black;
+  }
+  button {
+    width: 100%;
+    background-color: #3F51B5;
+    border: 1px solid black;
+    color: white;
+    outline-width: 0px;
+  }
+  #console {
+    width: 60%;
+    max-width: 40%;
+    word-wrap: break-word;
+    padding: 20px;
+    margin: 0 auto;
+    position: absolute;
+    left: 30%;
+    font-family: consolas;
+    font-size: 0.7em;
+    color: rgba(0,0,0,0.4);
+    padding-bottom: 100px;
+  }
+  .action {
+    color: black;
+  }
+  body {
+    font-family: gotham;
+  }
+  .footer {
+    position: fixed;
+    bottom: 0px;
+    color: white;
+    background-color: rgba(0,0,0,0.95);
+    width: 100%;
+    font-size: 0.7em;
+    text-align: center;
+    left: 0px;
+    padding: 10px;
+  }
+  .footer a {
+    text-decoration: underline;
+    color: white;
+  }
+  </style>
+</head>
+<body>
+  <div id="A_box">
+    <h2>I'm A</h2>
+    <div id="output_message_A" class="anim slideInLeft"></div>
+    <input type="text" id="input_message_A" placeholder="Input Message" value="One small step for OTR!"/><button onclick="encrypt_and_send(0)">Send to B</button>
+  </div>
+  <div id="console"></div>
+  <div id="B_box">
+    <h2>I'm B</h2>
+    <div id="output_message_B" class="anim slideInRight"></div>
+    <input type="text" id="input_message_B" placeholder="Input Message" /><button onclick="encrypt_and_send(1)">Send to A</button>
+  </div>
+  <div class="footer">Designed &amp; Implemented by <a href="https://mrinaldhar.com">Mrinal Dhar</a></div>
+</body>
+<script src="signal.js"></script>
+<script src="store.js"></script>
+<script src="helpers.js"></script>
+<script src="jquery.js"></script>
+<script>
+
+var Astore = new SignalProtocolStore();
+var Bstore = new SignalProtocolStore();
+var KeyHelper = libsignal.KeyHelper;
+
+var registrationIdA = KeyHelper.generateRegistrationId();
+var registrationIdB = KeyHelper.generateRegistrationId();
+var session_status = {};
+var keys_status = {"A":0, "B":0};
+Astore.put("registrationId", registrationIdA);
+Bstore.put("registrationId", registrationIdB);
+write_console("A - Generated Registration ID: ",registrationIdA)
+write_console("B - Generated Registration ID: ",registrationIdB)
+
+register(Astore, "A");
+register(Bstore, "B");
+
+var Aaddress = new libsignal.SignalProtocolAddress(registrationIdA, 1);
+var Baddress   = new libsignal.SignalProtocolAddress(registrationIdB, 1);
+
+function register(store, client) {
+  KeyHelper.generateIdentityKeyPair().then(function(identityKeyPair) {
+      store.put("identityKey", identityKeyPair);
+      write_console(client + " - Generated Identity Key Pair: ",util.toString(identityKeyPair.pubKey));
+      KeyHelper.generatePreKey(store.get("registrationId")).then(function(preKey) {
+          store.storePreKey(preKey.keyId, preKey.keyPair);
+          write_console(client + " - Generated Pre Key Pair: ",util.toString(preKey.keyPair.pubKey));
+
+      });
+
+      KeyHelper.generateSignedPreKey(store.get("identityKey"), store.get("registrationId")).then(function(signedPreKey) {
+          store.storeSignedPreKey(signedPreKey.keyId, signedPreKey.keyPair);
+          store.put("signedPreKeySignature"+store.get("registrationId"), signedPreKey.signature)
+          write_console(client + " - Generated Signed Pre Key Pair: ",util.toString(signedPreKey.keyPair.pubKey));
+          keys_status[client] = 1;
+          if (keys_status["A"] == 1 && keys_status["B"] == 1) {
+            start_session();
+          }
+      });
+  });
+}
+
+
+
+function write_console(action, msg) {
+  $('#console').append("<span class='action'>"+action+"</span>"+msg+"<br />");
+}
+
+function start_session() {
+    sessionBuilder = new libsignal.SessionBuilder(Astore, Baddress);
+
+    // Process a prekey fetched from the server. Returns a promise that resolves
+    // once a session is created and saved in the store, or rejects if the
+    // identityKey differs from a previously seen identity for this address.
+    var promise = sessionBuilder.processPreKey({
+        identityKey: Bstore.get("identityKey").pubKey,
+        registrationId : Bstore.get("registrationId"),
+        preKey:  {
+            keyId     : Bstore.get("registrationId"),
+            publicKey : Bstore.loadPreKey(Bstore.get("registrationId")).pubKey
+        },
+        signedPreKey: {
+            keyId     : Bstore.get("registrationId"),
+            publicKey : Bstore.loadSignedPreKey(Bstore.get("registrationId")).pubKey,
+            signature : Bstore.get("signedPreKeySignature"+Bstore.get("registrationId"))
+        }
+    });
+
+    promise.then(function onsuccess() {
+      write_console("X - Session Created.", "");
+      encrypt_and_send(0); // Demo mode only.
+    });
+
+    promise.catch(function onerror(error) {
+    });
+}
+function encrypt_and_send(direction) {
+  if (direction == 0) {
+    var sender = "A";
+    var receiver = "B";
+    var senderCipher = new libsignal.SessionCipher(Astore, Baddress);
+    var receiverCipher = new libsignal.SessionCipher(Bstore, Aaddress);
+  }
+  else {
+    var sender = "B";
+    var receiver = "A";
+    var senderCipher = new libsignal.SessionCipher(Bstore, Aaddress);
+    var receiverCipher = new libsignal.SessionCipher(Astore, Baddress);
+  }
+  session_status[sender] = 1;
+  var originalMessage = $('#input_message_'+sender).val();
+  write_console(sender + " - Encrypting plaintext: ", originalMessage);
+
+  senderCipher.encrypt(originalMessage).then(function(ciphertext) {
+      write_console(sender + " - Message sent: ", util.toString(ciphertext.body));
+      if (session_status[receiver] != 1) {
+        return receiverCipher.decryptPreKeyWhisperMessage(ciphertext.body, 'binary').then(function(plaintext) {
+          // handle plaintext ArrayBuffer
+          // session_exists = true;
+          write_console(receiver + " - Message received: ", util.toString(ciphertext.body));
+          write_console(receiver + " - Decrypted message: ", util.toString(plaintext));
+
+          console.log(util.toString(plaintext));
+          $('#output_message_'+receiver).fadeOut(function() {
+            $('#output_message_'+receiver).text(util.toString(plaintext));
+          }).fadeIn();
+        }).catch(function(error) {
+        });
+      }
+      else {
+          return receiverCipher.decryptWhisperMessage(ciphertext.body, 'binary').then(function(plaintext) {
+              console.log(util.toString(plaintext));
+              write_console(receiver + " - Message received: ", util.toString(ciphertext.body));
+              write_console(receiver + " - Decrypted message: ", util.toString(plaintext));
+              $('#output_message_'+receiver).fadeOut(function() {
+                $('#output_message_'+receiver).text(util.toString(plaintext));
+              }).fadeIn();
+          });
+      }
+
+  });
+
+}
+
+</script>
+</html>
